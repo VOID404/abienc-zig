@@ -46,7 +46,8 @@ pub const SolTuple = struct {
     }
 
     fn headLen(self: Self) usize {
-        assert(!self.dynamic());
+        if (self.dynamic())
+            return 64;
 
         return self.childHead();
     }
@@ -101,69 +102,69 @@ pub const SolArrayDyn = struct {
 };
 
 pub const SolType = enum {
-    UInt,
-    Tuple,
-    Array,
-    ArrayDyn,
+    uint,
+    tuple,
+    array,
+    arrayDyn,
 };
 
 pub const SolVal = union(SolType) {
     const Self = @This();
 
-    UInt: SolUint,
-    Tuple: SolTuple,
-    Array: SolTuple,
-    ArrayDyn: SolArrayDyn,
+    uint: SolUint,
+    tuple: SolTuple,
+    array: SolTuple,
+    arrayDyn: SolArrayDyn,
 
     pub fn pack_uint(val: u64) Self {
         const big = SolUint.Inner.new(val);
         return Self{
-            .UInt = SolUint.new(big),
+            .uint = SolUint.new(big),
         };
     }
 
     pub fn pack_tuple(val: []SolVal) Self {
         return Self{
-            .Tuple = SolTuple.new(val),
+            .tuple = SolTuple.new(val),
         };
     }
 
     pub fn pack_array(val: []SolVal) Self {
         return Self{
-            .Array = SolTuple.new(val),
+            .array = SolTuple.new(val),
         };
     }
 
     pub fn pack_array_dyn(val: []SolVal) Self {
         return Self{
-            .ArrayDyn = SolArrayDyn.new(val),
+            .arrayDyn = SolArrayDyn.new(val),
         };
     }
 
     pub fn encode(self: Self, buf: []u8) EncodingError!usize {
         return switch (self) {
-            SolType.UInt => |val| val.encode(buf),
-            SolType.Tuple => |val| val.encode(buf),
-            SolType.Array => |val| val.encode(buf),
-            SolType.ArrayDyn => |val| val.encode(buf),
+            SolType.uint => |val| val.encode(buf),
+            SolType.tuple => |val| val.encode(buf),
+            SolType.array => |val| val.encode(buf),
+            SolType.arrayDyn => |val| val.encode(buf),
         };
     }
 
     fn dynamic(self: Self) bool {
         return switch (self) {
-            SolType.UInt => false,
-            SolType.Tuple => |val| val.dynamic(),
-            SolType.Array => |val| val.dynamic(),
-            SolType.ArrayDyn => true,
+            SolType.uint => false,
+            SolType.tuple => |val| val.dynamic(),
+            SolType.array => |val| val.dynamic(),
+            SolType.arrayDyn => true,
         };
     }
 
     fn headLen(self: Self) usize {
         return switch (self) {
-            SolType.UInt => 64,
-            SolType.Tuple => |val| val.headLen(),
-            SolType.Array => |val| val.headLen(),
-            SolType.ArrayDyn => 64,
+            SolType.uint => 64,
+            SolType.tuple => |val| val.headLen(),
+            SolType.array => |val| val.headLen(),
+            SolType.arrayDyn => 64,
         };
     }
 
@@ -174,9 +175,9 @@ pub const SolVal = union(SolType) {
 
 const testing = std.testing;
 
-test "simple uints" {
+test "uint" {
     const num = SolVal.pack_uint(0xdead0beef);
-    const expected = "0000000000000000000000000000000000000000000000000000000dead0beef";
+    const expected = @embedFile("testing/uint.txt");
     var buf = [_]u8{0} ** 128;
 
     const len = try num.encode(&buf);
@@ -185,9 +186,9 @@ test "simple uints" {
     try testing.expectEqualStrings(expected, str);
 }
 
-test "tuple of uints" {
+test "(uint,uint,uint)" {
     const nums = [_]u64{ 1, 2, 3 };
-    const expected = "000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003";
+    const expected = @embedFile("testing/tuple01.txt");
 
     var pckd = [_]SolVal{SolVal.pack_uint(0)} ** 3;
 
@@ -201,6 +202,33 @@ test "tuple of uints" {
     const len = try tpl.encode(&buf);
 
     try testing.expectEqual(@as(usize, 3 * 64), len);
+    const str = std.mem.span(@as([*:0]u8, @ptrCast(&buf)));
+    try testing.expectEqualStrings(expected, str);
+}
+
+test "(uint,uint[][3],uint)" {
+    // (0, [[1,2],[],[3,4,5]], 6)
+    var nums: [7]SolVal = undefined;
+    for (&nums, 0..) |*num, i| {
+        num.* = SolVal.pack_uint(i);
+    }
+
+    const expected = @embedFile("testing/tuple02.txt");
+
+    const dyn1 = SolVal.pack_array_dyn(nums[1..3]);
+    const dyn2 = SolVal.pack_array_dyn(nums[3..3]);
+    const dyn3 = SolVal.pack_array_dyn(nums[3..6]);
+
+    var arrData = [_]SolVal{ dyn1, dyn2, dyn3 };
+    const arr = SolVal.pack_array(&arrData);
+
+    var tplData = [_]SolVal{ nums[0], arr, nums[6] };
+    const tpl = SolVal.pack_tuple(&tplData);
+
+    var buf = [_]u8{0} ** 1024;
+    const len = try tpl.encode(&buf);
+    try testing.expectEqual(@as(usize, 896), len);
+
     const str = std.mem.span(@as([*:0]u8, @ptrCast(&buf)));
     try testing.expectEqualStrings(expected, str);
 }
