@@ -4,12 +4,17 @@ const sol = @import("sol.zig");
 comptime {
     _ = SessionOpaque.init;
     _ = SessionOpaque.deinit;
-    _ = SessionOpaque.destroy;
+    _ = SessionOpaque.reset;
     _ = SessionOpaque.pack_uint;
     _ = SessionOpaque.pack_array;
     _ = SessionOpaque.pack_array_dyn;
     _ = SessionOpaque.pack_tuple;
+    _ = SolOpaque;
 }
+
+const SolOpaque = extern struct {
+    a: i8,
+};
 
 pub const SolValOpaque = opaque {
     fn unpack(this: *SolValOpaque) *sol.SolVal {
@@ -23,16 +28,15 @@ pub const SolValOpaque = opaque {
 };
 
 pub const SessionOpaque = opaque {
-    const Gpa = std.heap.GeneralPurposeAllocator(.{});
-
+    const Arena = std.heap.ArenaAllocator;
     const Sol = struct {
-        gpa: Gpa,
+        gpa: std.heap.ArenaAllocator,
     };
 
     pub export fn init() ?*SessionOpaque {
-        var gpa = Gpa{};
-        const self = gpa.allocator().create(Sol) catch return null;
-        self.gpa = gpa;
+        var arena = Arena.init(std.heap.page_allocator);
+        const self = arena.allocator().create(Sol) catch return null;
+        self.gpa = arena;
         return @as(*SessionOpaque, @ptrCast(self));
     }
 
@@ -45,11 +49,9 @@ pub const SessionOpaque = opaque {
         _ = gpa.deinit();
     }
 
-    pub export fn destroy(this: *SessionOpaque, val: *SolValOpaque) void {
+    pub export fn reset(this: *SessionOpaque) bool {
         const self = @as(*Sol, @ptrCast(@alignCast(this)));
-        const allocator = self.gpa.allocator();
-        const v = SolValOpaque.unpack(val);
-        allocator.destroy(v);
+        return self.gpa.reset(Arena.ResetMode.retain_capacity);
     }
 
     pub export fn pack_uint(this: *SessionOpaque, num: u64) ?*SolValOpaque {
@@ -133,8 +135,10 @@ test "init / deinit with alloc" {
 
     const s = Sol.init().?;
 
-    const num = s.pack_uint(10).?;
-    s.destroy(num);
+    _ = s.pack_uint(10).?;
+
+    const ok = s.reset();
+    try testing.expect(ok);
 
     s.deinit();
 }
@@ -154,7 +158,6 @@ test "encode uint" {
     const str = std.mem.span(@as([*:0]u8, @ptrCast(&buf)));
     try testing.expectEqualStrings(expected, str);
 
-    s.destroy(num.?);
     s.deinit();
 }
 
@@ -176,9 +179,5 @@ test "encode tuple" {
     const expected = "000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003";
     _ = expected;
 
-    for (nums, 0..) |_, i| {
-        s.destroy(nums[i]);
-    }
-    s.destroy(tpl.?);
-    // s.deinit();
+    s.deinit();
 }
